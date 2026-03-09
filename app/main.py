@@ -63,20 +63,25 @@ async def lifespan(app: FastAPI):
     """Application startup and shutdown events."""
     logger.info("🚀 Starting SmartCertify ML Microservice...")
 
-    # Pre-load critical models on startup
+    # Auto-train models on first startup if not found
     try:
         from app.utils.model_io import model_exists
 
-        loaded = []
-        for name in ["preprocessor.joblib", "fraud_ensemble.joblib", "fraud_rf.joblib",
-                      "isolation_forest.joblib", "trust_regression.joblib"]:
-            if model_exists(name):
-                loaded.append(name)
-
-        logger.info(f"Available models: {loaded}")
+        if not model_exists("preprocessor.joblib"):
+            logger.info("⚙️ No trained models found — running first-time training...")
+            from app.models.fraud_detection.train import main as train_fraud
+            train_fraud()
+            logger.info("✅ First-time training complete!")
+        else:
+            loaded = []
+            for name in ["preprocessor.joblib", "fraud_ensemble.joblib", "fraud_rf.joblib",
+                          "isolation_forest.joblib", "trust_regression.joblib"]:
+                if model_exists(name):
+                    loaded.append(name)
+            logger.info(f"Available models: {loaded}")
 
     except Exception as e:
-        logger.warning(f"Model preloading skipped: {e}")
+        logger.warning(f"Model loading/training error: {e}")
 
     # Start keep-alive background task
     keep_alive_task = asyncio.create_task(keep_alive_ping())

@@ -1,6 +1,7 @@
 """
 SmartCertify ML — Fraud Detection Training
-Train all classifiers, tune hyperparameters, and create voting ensemble.
+Train classifiers, tune hyperparameters, and create voting ensemble.
+Optimized for fast deployment on resource-constrained environments.
 """
 
 import numpy as np
@@ -12,8 +13,6 @@ from pathlib import Path
 from typing import Dict, Any, Tuple
 
 from sklearn.linear_model import LogisticRegression
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.svm import SVC
 from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.model_selection import StratifiedKFold, cross_val_score
 
@@ -25,14 +24,20 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 
 from app.config.settings import (
-    RANDOM_SEED, CV_FOLDS, MODEL_DIR, PLOTS_DIR,
-    NN_EPOCHS, NN_BATCH_SIZE, NN_LEARNING_RATE, NN_WEIGHT_DECAY, NN_PATIENCE,
+    RANDOM_SEED, MODEL_DIR, PLOTS_DIR,
+    NN_BATCH_SIZE, NN_LEARNING_RATE, NN_WEIGHT_DECAY,
 )
 from app.utils.model_io import save_sklearn_model, save_pytorch_model
 from app.utils.visualization import plot_learning_curves
 from app.config.model_registry import register_model
 
 logger = logging.getLogger(__name__)
+
+# Fast-deploy settings (override slow defaults)
+FAST_CV_FOLDS = 3
+FAST_NN_EPOCHS = 15
+FAST_NN_PATIENCE = 5
+FAST_N_ESTIMATORS = 100
 
 
 # ─── PyTorch Neural Network ──────────────────────────────────
@@ -74,16 +79,10 @@ def train_neural_network(
     input_dim = X_train.shape[1]
     model = CertificateFraudNet(input_dim).to(device)
 
-    # Handle class imbalance with pos_weight
-    n_pos = y_train.sum()
-    n_neg = len(y_train) - n_pos
-    pos_weight = torch.tensor([n_neg / max(n_pos, 1)], dtype=torch.float32).to(device)
-
-    criterion = nn.BCELoss(weight=None)  # Using balanced data from SMOTE
+    criterion = nn.BCELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=NN_LEARNING_RATE, weight_decay=NN_WEIGHT_DECAY)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
 
-    # Create data loaders
     train_dataset = TensorDataset(
         torch.FloatTensor(X_train),
         torch.FloatTensor(y_train.astype(np.float32)),
@@ -95,15 +94,13 @@ def train_neural_network(
     train_loader = DataLoader(train_dataset, batch_size=NN_BATCH_SIZE, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=NN_BATCH_SIZE, shuffle=False)
 
-    # Training loop
     train_losses, val_losses = [], []
     train_accs, val_accs = [], []
     best_val_loss = float("inf")
     patience_counter = 0
     best_state = None
 
-    for epoch in range(NN_EPOCHS):
-        # Train
+    for epoch in range(FAST_NN_EPOCHS):
         model.train()
         epoch_loss = 0.0
         correct = 0
@@ -127,7 +124,6 @@ def train_neural_network(
         train_losses.append(train_loss)
         train_accs.append(train_acc)
 
-        # Validate
         model.eval()
         val_loss = 0.0
         val_correct = 0
@@ -152,39 +148,33 @@ def train_neural_network(
 
         if (epoch + 1) % 5 == 0 or epoch == 0:
             logger.info(
-                f"Epoch {epoch+1}/{NN_EPOCHS} — "
+                f"Epoch {epoch+1}/{FAST_NN_EPOCHS} — "
                 f"Train Loss: {train_loss:.4f}, Acc: {train_acc:.4f} | "
                 f"Val Loss: {val_loss:.4f}, Acc: {val_acc:.4f}"
             )
 
-        # Early stopping
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             patience_counter = 0
             best_state = model.state_dict().copy()
         else:
             patience_counter += 1
-            if patience_counter >= NN_PATIENCE:
+            if patience_counter >= FAST_NN_PATIENCE:
                 logger.info(f"Early stopping at epoch {epoch+1}")
                 break
 
-    # Restore best model
     if best_state:
         model.load_state_dict(best_state)
 
-    # Save learning curves
-    plot_learning_curves(train_losses, val_losses, train_accs, val_accs)
+    try:
+        plot_learning_curves(train_losses, val_losses, train_accs, val_accs)
+    except Exception:
+        pass
 
-    # Save model
     save_pytorch_model(model, "fraud_nn.pt", optimizer=optimizer, epoch=epoch + 1,
                        metadata={"input_dim": input_dim, "best_val_loss": best_val_loss, "val_acc": val_acc})
 
     history = {
-        "train_losses": train_losses,
-        "val_losses": val_losses,
-        "train_accs": train_accs,
-        "val_accs": val_accs,
-        "best_epoch": epoch + 1 - patience_counter,
         "final_val_acc": val_acc,
     }
 
@@ -197,34 +187,26 @@ def train_all_models(
     X_test: np.ndarray,
     y_test: np.ndarray,
 ) -> Dict[str, Any]:
-    """Train all fraud detection models, evaluate with cross-validation, and save."""
+    """Train fraud detection models (optimized for speed — no SVM/KNN)."""
 
-    # ── Define Models ───────────────────────────────────────
     sklearn_models = {}
 
     logger.info("Training Logistic Regression...")
     sklearn_models["logistic_regression"] = LogisticRegression(
-        C=1.0, max_iter=1000, random_state=RANDOM_SEED, class_weight="balanced"
-    )
-
-    logger.info("Training k-NN...")
-    sklearn_models["knn"] = KNeighborsClassifier(n_neighbors=5)
-
-    logger.info("Training SVM...")
-    sklearn_models["svm"] = SVC(
-        kernel="rbf", probability=True, random_state=RANDOM_SEED, class_weight="balanced"
+        C=1.0, max_iter=500, random_state=RANDOM_SEED, class_weight="balanced"
     )
 
     logger.info("Training Random Forest...")
     sklearn_models["random_forest"] = RandomForestClassifier(
-        n_estimators=200, max_depth=15, random_state=RANDOM_SEED, class_weight="balanced", n_jobs=-1
+        n_estimators=FAST_N_ESTIMATORS, max_depth=15,
+        random_state=RANDOM_SEED, class_weight="balanced", n_jobs=-1
     )
 
     try:
         from xgboost import XGBClassifier
         logger.info("Training XGBoost...")
         sklearn_models["xgboost"] = XGBClassifier(
-            n_estimators=200, learning_rate=0.05, max_depth=6,
+            n_estimators=FAST_N_ESTIMATORS, learning_rate=0.1, max_depth=6,
             random_state=RANDOM_SEED, eval_metric="logloss",
             use_label_encoder=False, n_jobs=-1,
         )
@@ -235,29 +217,27 @@ def train_all_models(
         from lightgbm import LGBMClassifier
         logger.info("Training LightGBM...")
         sklearn_models["lightgbm"] = LGBMClassifier(
-            n_estimators=200, learning_rate=0.05, random_state=RANDOM_SEED,
-            class_weight="balanced", verbose=-1, n_jobs=-1,
+            n_estimators=FAST_N_ESTIMATORS, learning_rate=0.1,
+            random_state=RANDOM_SEED, class_weight="balanced", verbose=-1, n_jobs=-1,
         )
     except ImportError:
         logger.warning("LightGBM not installed, skipping")
 
-    # ── Cross-Validation + Training ──────────────────────────
-    cv = StratifiedKFold(n_splits=CV_FOLDS, shuffle=True, random_state=RANDOM_SEED)
+    # ── Cross-Validation + Training (3-fold for speed) ───────
+    cv = StratifiedKFold(n_splits=FAST_CV_FOLDS, shuffle=True, random_state=RANDOM_SEED)
     benchmark = []
+
+    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 
     for name, model in sklearn_models.items():
         start_time = time.time()
         logger.info(f"Cross-validating {name}...")
 
-        # Cross-validation scores
         cv_scores = cross_val_score(model, X_train, y_train, cv=cv, scoring="f1", n_jobs=-1)
 
-        # Fit on full training set
         model.fit(X_train, y_train)
         train_time = time.time() - start_time
 
-        # Evaluate on test set
-        from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
         y_pred = model.predict(X_test)
         y_proba = model.predict_proba(X_test)[:, 1] if hasattr(model, "predict_proba") else y_pred.astype(float)
 
@@ -275,7 +255,6 @@ def train_all_models(
         benchmark.append({"model": name, **metrics})
         logger.info(f"  {name}: F1={metrics['f1']}, ROC-AUC={metrics['roc_auc']}, CV-F1={metrics['cv_f1_mean']}±{metrics['cv_f1_std']}")
 
-        # Save model
         filename = f"fraud_{name.replace(' ', '_')}.joblib"
         if name == "random_forest":
             filename = "fraud_rf.joblib"
@@ -321,7 +300,6 @@ def train_all_models(
     logger.info("Training Neural Network...")
     nn_model, nn_history = train_neural_network(X_train, y_train, X_test, y_test)
 
-    # NN evaluation
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     nn_model.eval()
     with torch.no_grad():
@@ -329,7 +307,6 @@ def train_all_models(
         nn_predictions = nn_model(X_test_tensor).cpu().numpy().squeeze()
 
     nn_pred_labels = (nn_predictions > 0.5).astype(int)
-    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
     nn_metrics = {
         "accuracy": round(accuracy_score(y_test, nn_pred_labels), 4),
         "precision": round(precision_score(y_test, nn_pred_labels, zero_division=0), 4),
@@ -364,7 +341,6 @@ def main():
     print("  SmartCertify ML — Fraud Detection Training Pipeline")
     print("=" * 60)
 
-    # Generate data if needed
     from app.config.settings import DATASET_PATH
     if not Path(DATASET_PATH).exists():
         print("\nGenerating synthetic dataset first...")

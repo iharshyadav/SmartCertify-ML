@@ -7,7 +7,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for better caching
+# Install CPU-only PyTorch FIRST (saves ~1.5GB vs full CUDA version)
+RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+# Copy and install remaining requirements
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -17,9 +20,9 @@ COPY . .
 # Create necessary directories
 RUN mkdir -p saved_models plots logs
 
-# Generate synthetic data and train models
-RUN python -m app.data.generate_synthetic && \
-    python -m app.models.fraud_detection.train
+# Only generate data at build time (fast ~10s)
+# Models will be trained on FIRST startup instead
+RUN python -m app.data.generate_synthetic
 
 # Expose port
 EXPOSE 8000
