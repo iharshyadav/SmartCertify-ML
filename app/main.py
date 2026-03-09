@@ -1,20 +1,16 @@
 """
-SmartCertify ML Microservice — FastAPI Entry Point
+SmartCertify ML Microservice — FastAPI Entry Point (Lightweight)
 
-A standalone Python ML microservice for the SmartCertify
-blockchain-powered certificate management platform.
-
-Run with:
-    uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+Optimized for 512MB memory environments (Render free tier).
+Run with: uvicorn app.main:app --host 0.0.0.0 --port 8000
 """
 
 import asyncio
 import logging
 import os
 import time
+import urllib.request
 from contextlib import asynccontextmanager
-
-import httpx
 
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,7 +31,7 @@ logger = logging.getLogger("smartcertify.main")
 
 
 # ─── Keep-Alive Ping ─────────────────────────────────────────
-KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "300"))  # seconds (default 5 min)
+KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "300"))
 
 async def keep_alive_ping():
     """Self-ping to prevent Render free-tier from sleeping."""
@@ -47,14 +43,13 @@ async def keep_alive_ping():
     ping_url = f"{service_url}/health"
     logger.info(f"🏓 Keep-alive started — pinging {ping_url} every {KEEP_ALIVE_INTERVAL}s")
 
-    async with httpx.AsyncClient(timeout=10) as client:
-        while True:
-            await asyncio.sleep(KEEP_ALIVE_INTERVAL)
-            try:
-                resp = await client.get(ping_url)
-                logger.debug(f"Keep-alive ping: {resp.status_code}")
-            except Exception as e:
-                logger.warning(f"Keep-alive ping failed: {e}")
+    while True:
+        await asyncio.sleep(KEEP_ALIVE_INTERVAL)
+        try:
+            urllib.request.urlopen(ping_url, timeout=10)
+            logger.debug("Keep-alive ping OK")
+        except Exception as e:
+            logger.warning(f"Keep-alive ping failed: {e}")
 
 
 # ─── Lifespan (startup/shutdown) ──────────────────────────────
@@ -63,7 +58,7 @@ async def lifespan(app: FastAPI):
     """Application startup and shutdown events."""
     logger.info("🚀 Starting SmartCertify ML Microservice...")
 
-    # Auto-train models on first startup if not found
+    # Auto-train models on first startup
     try:
         from app.utils.model_io import model_exists
 
@@ -73,23 +68,18 @@ async def lifespan(app: FastAPI):
             train_fraud()
             logger.info("✅ First-time training complete!")
         else:
-            loaded = []
-            for name in ["preprocessor.joblib", "fraud_ensemble.joblib", "fraud_rf.joblib",
-                          "isolation_forest.joblib", "trust_regression.joblib"]:
-                if model_exists(name):
-                    loaded.append(name)
+            loaded = [n for n in ["preprocessor.joblib", "fraud_ensemble.joblib", "fraud_rf.joblib"]
+                      if model_exists(n)]
             logger.info(f"Available models: {loaded}")
 
     except Exception as e:
         logger.warning(f"Model loading/training error: {e}")
 
-    # Start keep-alive background task
     keep_alive_task = asyncio.create_task(keep_alive_ping())
 
     logger.info("✅ SmartCertify ML Microservice ready!")
     yield
 
-    # Cancel keep-alive on shutdown
     keep_alive_task.cancel()
     logger.info("👋 Shutting down SmartCertify ML Microservice...")
 
@@ -97,12 +87,7 @@ async def lifespan(app: FastAPI):
 # ─── FastAPI App ──────────────────────────────────────────────
 app = FastAPI(
     title="SmartCertify ML Microservice",
-    description=(
-        "Machine Learning service for the SmartCertify blockchain-powered "
-        "certificate management and verification platform. Provides fraud detection, "
-        "similarity analysis, trust scoring, image tampering detection, anomaly detection, "
-        "recommendations, and AI chatbot capabilities."
-    ),
+    description="Lightweight ML service for SmartCertify — fraud detection, similarity, trust scoring, anomaly detection, recommendations, and chatbot.",
     version="1.0.0",
     lifespan=lifespan,
     docs_url="/docs",
@@ -157,13 +142,11 @@ async def health_check():
 
 @app.get(f"{API_PREFIX}/metrics", tags=["System"])
 async def model_metrics(api_key: str = Depends(verify_api_key)):
-    """Get model performance and monitoring metrics."""
     return get_metrics()
 
 
 @app.get("/", tags=["System"])
 async def root():
-    """Root endpoint with API documentation link."""
     return {
         "service": "SmartCertify ML Microservice",
         "version": "1.0.0",
@@ -177,6 +160,5 @@ async def root():
             "recommend": f"{API_PREFIX}/recommend",
             "anomaly": f"{API_PREFIX}/anomaly",
             "chat": f"{API_PREFIX}/chat",
-            "metrics": f"{API_PREFIX}/metrics",
         },
     }

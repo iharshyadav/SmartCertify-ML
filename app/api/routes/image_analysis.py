@@ -40,7 +40,7 @@ async def analyze_certificate_image(
     log_prediction(
         endpoint="/api/ml/analyze-image",
         input_data={"certificate_id": data.certificate_id},
-        prediction={k: v for k, v in result.items() if k != "gradcam_heatmap_base64"},
+        prediction=result,
         confidence=result.get("confidence", 0),
         latency_ms=latency_ms,
     )

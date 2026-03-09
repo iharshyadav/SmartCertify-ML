@@ -281,8 +281,6 @@ def generate_recommendation_dataset(n_students: int = 1000, n_courses: int = 50,
 
 def main():
     """Generate all synthetic datasets and save to disk."""
-    from app.utils.visualization import plot_class_distribution, plot_correlation_heatmap
-
     logger.info("Generating synthetic certificate dataset...")
     df = generate_certificates_dataset()
     Path(DATASET_PATH).parent.mkdir(parents=True, exist_ok=True)
@@ -290,10 +288,14 @@ def main():
     logger.info(f"Saved {len(df)} records to {DATASET_PATH}")
     logger.info(f"Class distribution: {df['label'].value_counts().to_dict()}")
 
-    # Plot distributions
-    plot_class_distribution(df["label"].values)
-    plot_correlation_heatmap(df)
-    logger.info("Saved distribution and correlation plots")
+    # Skip plots in production to save memory
+    try:
+        from app.utils.visualization import plot_class_distribution, plot_correlation_heatmap
+        plot_class_distribution(df["label"].values)
+        plot_correlation_heatmap(df)
+        logger.info("Saved distribution and correlation plots")
+    except Exception:
+        logger.info("Skipping plots (memory optimization)")
 
     # Trust score dataset
     trust_df = generate_trust_score_dataset()

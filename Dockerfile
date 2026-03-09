@@ -7,10 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install CPU-only PyTorch FIRST (saves ~1.5GB vs full CUDA version)
-RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
-
-# Copy and install remaining requirements
+# Copy and install requirements (lightweight — no PyTorch/transformers)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -20,8 +17,7 @@ COPY . .
 # Create necessary directories
 RUN mkdir -p saved_models plots logs
 
-# Only generate data at build time (fast ~10s)
-# Models will be trained on FIRST startup instead
+# Generate data (fast ~5s) — models train on first startup
 RUN python -m app.data.generate_synthetic
 
 # Expose port

@@ -107,7 +107,7 @@ def _combine_text_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 def prepare_data(
     df: Optional[pd.DataFrame] = None,
-    apply_smote: bool = True,
+    apply_smote: bool = False,  # Disabled by default to save memory
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, object]:
     """
     Full data preparation pipeline:

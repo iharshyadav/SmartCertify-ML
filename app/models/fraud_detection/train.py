@@ -1,184 +1,32 @@
 """
-SmartCertify ML — Fraud Detection Training
-Train classifiers, tune hyperparameters, and create voting ensemble.
-Optimized for fast deployment on resource-constrained environments.
+SmartCertify ML — Fraud Detection Training (Lightweight)
+Train sklearn classifiers and create voting ensemble.
+Optimized for 512MB memory environments (Render free tier).
 """
 
 import numpy as np
 import pandas as pd
 import logging
-import json
 import time
 from pathlib import Path
-from typing import Dict, Any, Tuple
+from typing import Dict, Any
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, VotingClassifier
 from sklearn.model_selection import StratifiedKFold, cross_val_score
-
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
 
-from app.config.settings import (
-    RANDOM_SEED, MODEL_DIR, PLOTS_DIR,
-    NN_BATCH_SIZE, NN_LEARNING_RATE, NN_WEIGHT_DECAY,
-)
-from app.utils.model_io import save_sklearn_model, save_pytorch_model
-from app.utils.visualization import plot_learning_curves
+from app.config.settings import RANDOM_SEED, MODEL_DIR, PLOTS_DIR
+from app.utils.model_io import save_sklearn_model
 from app.config.model_registry import register_model
 
 logger = logging.getLogger(__name__)
 
-# Fast-deploy settings (override slow defaults)
-FAST_CV_FOLDS = 3
-FAST_NN_EPOCHS = 15
-FAST_NN_PATIENCE = 5
-FAST_N_ESTIMATORS = 100
-
-
-# ─── PyTorch Neural Network ──────────────────────────────────
-
-class CertificateFraudNet(nn.Module):
-    """Deep neural network for certificate fraud detection."""
-
-    def __init__(self, input_dim: int):
-        super().__init__()
-        self.network = nn.Sequential(
-            nn.Linear(input_dim, 256),
-            nn.BatchNorm1d(256),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(256, 128),
-            nn.BatchNorm1d(128),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, 1),
-            nn.Sigmoid(),
-        )
-
-    def forward(self, x):
-        return self.network(x)
-
-
-def train_neural_network(
-    X_train: np.ndarray,
-    y_train: np.ndarray,
-    X_val: np.ndarray,
-    y_val: np.ndarray,
-) -> Tuple[CertificateFraudNet, Dict[str, Any]]:
-    """Train the PyTorch neural network with early stopping."""
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    logger.info(f"Training Neural Network on {device}")
-
-    input_dim = X_train.shape[1]
-    model = CertificateFraudNet(input_dim).to(device)
-
-    criterion = nn.BCELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=NN_LEARNING_RATE, weight_decay=NN_WEIGHT_DECAY)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
-
-    train_dataset = TensorDataset(
-        torch.FloatTensor(X_train),
-        torch.FloatTensor(y_train.astype(np.float32)),
-    )
-    val_dataset = TensorDataset(
-        torch.FloatTensor(X_val),
-        torch.FloatTensor(y_val.astype(np.float32)),
-    )
-    train_loader = DataLoader(train_dataset, batch_size=NN_BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=NN_BATCH_SIZE, shuffle=False)
-
-    train_losses, val_losses = [], []
-    train_accs, val_accs = [], []
-    best_val_loss = float("inf")
-    patience_counter = 0
-    best_state = None
-
-    for epoch in range(FAST_NN_EPOCHS):
-        model.train()
-        epoch_loss = 0.0
-        correct = 0
-        total = 0
-
-        for X_batch, y_batch in train_loader:
-            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
-            optimizer.zero_grad()
-            output = model(X_batch).squeeze()
-            loss = criterion(output, y_batch)
-            loss.backward()
-            optimizer.step()
-
-            epoch_loss += loss.item() * len(X_batch)
-            predicted = (output > 0.5).float()
-            correct += (predicted == y_batch).sum().item()
-            total += len(y_batch)
-
-        train_loss = epoch_loss / total
-        train_acc = correct / total
-        train_losses.append(train_loss)
-        train_accs.append(train_acc)
-
-        model.eval()
-        val_loss = 0.0
-        val_correct = 0
-        val_total = 0
-
-        with torch.no_grad():
-            for X_batch, y_batch in val_loader:
-                X_batch, y_batch = X_batch.to(device), y_batch.to(device)
-                output = model(X_batch).squeeze()
-                loss = criterion(output, y_batch)
-                val_loss += loss.item() * len(X_batch)
-                predicted = (output > 0.5).float()
-                val_correct += (predicted == y_batch).sum().item()
-                val_total += len(y_batch)
-
-        val_loss = val_loss / val_total
-        val_acc = val_correct / val_total
-        val_losses.append(val_loss)
-        val_accs.append(val_acc)
-
-        scheduler.step(val_loss)
-
-        if (epoch + 1) % 5 == 0 or epoch == 0:
-            logger.info(
-                f"Epoch {epoch+1}/{FAST_NN_EPOCHS} — "
-                f"Train Loss: {train_loss:.4f}, Acc: {train_acc:.4f} | "
-                f"Val Loss: {val_loss:.4f}, Acc: {val_acc:.4f}"
-            )
-
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            patience_counter = 0
-            best_state = model.state_dict().copy()
-        else:
-            patience_counter += 1
-            if patience_counter >= FAST_NN_PATIENCE:
-                logger.info(f"Early stopping at epoch {epoch+1}")
-                break
-
-    if best_state:
-        model.load_state_dict(best_state)
-
-    try:
-        plot_learning_curves(train_losses, val_losses, train_accs, val_accs)
-    except Exception:
-        pass
-
-    save_pytorch_model(model, "fraud_nn.pt", optimizer=optimizer, epoch=epoch + 1,
-                       metadata={"input_dim": input_dim, "best_val_loss": best_val_loss, "val_acc": val_acc})
-
-    history = {
-        "final_val_acc": val_acc,
-    }
-
-    return model, history
+CV_FOLDS = 3
+N_ESTIMATORS = 100
 
 
 def train_all_models(
@@ -187,7 +35,7 @@ def train_all_models(
     X_test: np.ndarray,
     y_test: np.ndarray,
 ) -> Dict[str, Any]:
-    """Train fraud detection models (optimized for speed — no SVM/KNN)."""
+    """Train fraud detection models (lightweight — fits in 512MB)."""
 
     sklearn_models = {}
 
@@ -198,7 +46,7 @@ def train_all_models(
 
     logger.info("Training Random Forest...")
     sklearn_models["random_forest"] = RandomForestClassifier(
-        n_estimators=FAST_N_ESTIMATORS, max_depth=15,
+        n_estimators=N_ESTIMATORS, max_depth=12,
         random_state=RANDOM_SEED, class_weight="balanced", n_jobs=-1
     )
 
@@ -206,7 +54,7 @@ def train_all_models(
         from xgboost import XGBClassifier
         logger.info("Training XGBoost...")
         sklearn_models["xgboost"] = XGBClassifier(
-            n_estimators=FAST_N_ESTIMATORS, learning_rate=0.1, max_depth=6,
+            n_estimators=N_ESTIMATORS, learning_rate=0.1, max_depth=6,
             random_state=RANDOM_SEED, eval_metric="logloss",
             use_label_encoder=False, n_jobs=-1,
         )
@@ -217,24 +65,21 @@ def train_all_models(
         from lightgbm import LGBMClassifier
         logger.info("Training LightGBM...")
         sklearn_models["lightgbm"] = LGBMClassifier(
-            n_estimators=FAST_N_ESTIMATORS, learning_rate=0.1,
+            n_estimators=N_ESTIMATORS, learning_rate=0.1,
             random_state=RANDOM_SEED, class_weight="balanced", verbose=-1, n_jobs=-1,
         )
     except ImportError:
         logger.warning("LightGBM not installed, skipping")
 
-    # ── Cross-Validation + Training (3-fold for speed) ───────
-    cv = StratifiedKFold(n_splits=FAST_CV_FOLDS, shuffle=True, random_state=RANDOM_SEED)
+    # ── Cross-Validation + Training ──────────────────────────
+    cv = StratifiedKFold(n_splits=CV_FOLDS, shuffle=True, random_state=RANDOM_SEED)
     benchmark = []
-
-    from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 
     for name, model in sklearn_models.items():
         start_time = time.time()
         logger.info(f"Cross-validating {name}...")
 
         cv_scores = cross_val_score(model, X_train, y_train, cv=cv, scoring="f1", n_jobs=-1)
-
         model.fit(X_train, y_train)
         train_time = time.time() - start_time
 
@@ -253,29 +98,21 @@ def train_all_models(
         }
 
         benchmark.append({"model": name, **metrics})
-        logger.info(f"  {name}: F1={metrics['f1']}, ROC-AUC={metrics['roc_auc']}, CV-F1={metrics['cv_f1_mean']}±{metrics['cv_f1_std']}")
+        logger.info(f"  {name}: F1={metrics['f1']}, ROC-AUC={metrics['roc_auc']}")
 
-        filename = f"fraud_{name.replace(' ', '_')}.joblib"
-        if name == "random_forest":
-            filename = "fraud_rf.joblib"
-        elif name == "xgboost":
-            filename = "fraud_xgb.joblib"
-        elif name == "lightgbm":
-            filename = "fraud_lgbm.joblib"
-        elif name == "logistic_regression":
-            filename = "fraud_lr.joblib"
+        filename = {"random_forest": "fraud_rf.joblib", "xgboost": "fraud_xgb.joblib",
+                     "lightgbm": "fraud_lgbm.joblib", "logistic_regression": "fraud_lr.joblib"
+                    }.get(name, f"fraud_{name}.joblib")
 
         save_sklearn_model(model, filename, metadata=metrics)
         register_model(name, "1.0", str(MODEL_DIR / filename), metrics=metrics)
 
     # ── Voting Ensemble ──────────────────────────────────────
-    ensemble_estimators = []
-    for name in ["random_forest", "xgboost", "lightgbm"]:
-        if name in sklearn_models:
-            ensemble_estimators.append((name, sklearn_models[name]))
+    ensemble_estimators = [(n, sklearn_models[n]) for n in ["random_forest", "xgboost", "lightgbm"] if n in sklearn_models]
 
+    ensemble = None
     if len(ensemble_estimators) >= 2:
-        logger.info("Building Voting Ensemble (RF + XGB + LGBM)...")
+        logger.info("Building Voting Ensemble...")
         ensemble = VotingClassifier(estimators=ensemble_estimators, voting="soft", n_jobs=-1)
         ensemble.fit(X_train, y_train)
 
@@ -296,41 +133,13 @@ def train_all_models(
         save_sklearn_model(ensemble, "fraud_ensemble.joblib", metadata=ens_metrics)
         register_model("voting_ensemble", "1.0", str(MODEL_DIR / "fraud_ensemble.joblib"), metrics=ens_metrics)
 
-    # ── Train Neural Network ─────────────────────────────────
-    logger.info("Training Neural Network...")
-    nn_model, nn_history = train_neural_network(X_train, y_train, X_test, y_test)
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    nn_model.eval()
-    with torch.no_grad():
-        X_test_tensor = torch.FloatTensor(X_test).to(device)
-        nn_predictions = nn_model(X_test_tensor).cpu().numpy().squeeze()
-
-    nn_pred_labels = (nn_predictions > 0.5).astype(int)
-    nn_metrics = {
-        "accuracy": round(accuracy_score(y_test, nn_pred_labels), 4),
-        "precision": round(precision_score(y_test, nn_pred_labels, zero_division=0), 4),
-        "recall": round(recall_score(y_test, nn_pred_labels, zero_division=0), 4),
-        "f1": round(f1_score(y_test, nn_pred_labels, zero_division=0), 4),
-        "roc_auc": round(roc_auc_score(y_test, nn_predictions), 4),
-        "val_accuracy": nn_history["final_val_acc"],
-    }
-    benchmark.append({"model": "neural_network", **nn_metrics})
-    register_model("neural_network", "1.0", str(MODEL_DIR / "fraud_nn.pt"), metrics=nn_metrics)
-
     # ── Save Benchmark ───────────────────────────────────────
     benchmark_df = pd.DataFrame(benchmark)
     benchmark_path = PLOTS_DIR / "model_benchmark.csv"
     benchmark_df.to_csv(benchmark_path, index=False)
     logger.info(f"\n{benchmark_df.to_string(index=False)}")
-    logger.info(f"Benchmark saved to {benchmark_path}")
 
-    return {
-        "models": sklearn_models,
-        "ensemble": ensemble if len(ensemble_estimators) >= 2 else None,
-        "nn_model": nn_model,
-        "benchmark": benchmark_df,
-    }
+    return {"models": sklearn_models, "ensemble": ensemble, "benchmark": benchmark_df}
 
 
 def main():
@@ -338,12 +147,12 @@ def main():
     from app.data.preprocess import prepare_data
 
     print("=" * 60)
-    print("  SmartCertify ML — Fraud Detection Training Pipeline")
+    print("  SmartCertify ML — Fraud Detection Training")
     print("=" * 60)
 
     from app.config.settings import DATASET_PATH
     if not Path(DATASET_PATH).exists():
-        print("\nGenerating synthetic dataset first...")
+        print("\nGenerating synthetic dataset...")
         from app.data.generate_synthetic import main as gen_main
         gen_main()
 
@@ -353,7 +162,7 @@ def main():
     print("\n🤖 Training models...")
     results = train_all_models(X_train, y_train, X_test, y_test)
 
-    print("\n✅ Training complete! Benchmark:")
+    print("\n✅ Training complete!")
     print(results["benchmark"].to_string(index=False))
     print(f"\nModels saved to: {MODEL_DIR}")
 
