@@ -8,9 +8,13 @@ Run with:
     uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 """
 
+import asyncio
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
+
+import httpx
 
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +32,29 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger("smartcertify.main")
+
+
+# ─── Keep-Alive Ping ─────────────────────────────────────────
+KEEP_ALIVE_INTERVAL = int(os.getenv("KEEP_ALIVE_INTERVAL", "300"))  # seconds (default 5 min)
+
+async def keep_alive_ping():
+    """Self-ping to prevent Render free-tier from sleeping."""
+    service_url = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("SERVICE_URL")
+    if not service_url:
+        logger.info("No RENDER_EXTERNAL_URL set — keep-alive disabled (local mode)")
+        return
+
+    ping_url = f"{service_url}/health"
+    logger.info(f"🏓 Keep-alive started — pinging {ping_url} every {KEEP_ALIVE_INTERVAL}s")
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        while True:
+            await asyncio.sleep(KEEP_ALIVE_INTERVAL)
+            try:
+                resp = await client.get(ping_url)
+                logger.debug(f"Keep-alive ping: {resp.status_code}")
+            except Exception as e:
+                logger.warning(f"Keep-alive ping failed: {e}")
 
 
 # ─── Lifespan (startup/shutdown) ──────────────────────────────
@@ -51,8 +78,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Model preloading skipped: {e}")
 
+    # Start keep-alive background task
+    keep_alive_task = asyncio.create_task(keep_alive_ping())
+
     logger.info("✅ SmartCertify ML Microservice ready!")
     yield
+
+    # Cancel keep-alive on shutdown
+    keep_alive_task.cancel()
     logger.info("👋 Shutting down SmartCertify ML Microservice...")
 
 
