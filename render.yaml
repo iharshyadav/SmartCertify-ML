@@ -1,0 +1,15 @@
+# SmartCertify ML — Render Blueprint
+# Deploy with: https://render.com/deploy
+
+services:
+  - type: web
+    name: smartcertify-ml
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    envVars:
+      - key: ML_API_KEY
+        value: smartcertify-dev-key
+      - key: LOG_LEVEL
+        value: INFO
+    healthCheckPath: /health

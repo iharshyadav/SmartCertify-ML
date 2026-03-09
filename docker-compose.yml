@@ -1,0 +1,36 @@
+version: "3.9"
+
+services:
+  ml-service:
+    build: .
+    container_name: smartcertify-ml
+    ports:
+      - "8000:8000"
+    environment:
+      - ML_API_KEY=${ML_API_KEY:-smartcertify-dev-key}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./saved_models:/app/saved_models
+      - ./logs:/app/logs
+      - ./plots:/app/plots
+    depends_on:
+      - redis
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  redis:
+    image: redis:alpine
+    container_name: smartcertify-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+
+volumes:
+  redis-data:
