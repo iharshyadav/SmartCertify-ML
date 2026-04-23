@@ -1,49 +1,81 @@
 """
-SmartCertify ML — Chatbot API Route
-POST /api/ml/chat
+chatbot.py — Certificate Q&A chatbot.
+POST /api/ml/chat — DistilBERT zero-shot classification.
 """
+from __future__ import annotations
 
 import time
-import logging
-from typing import Optional, Dict, Any
+from typing import Optional
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
 from app.api.middleware.auth import verify_api_key
-from app.models.chatbot.transformer_chat import chat as chatbot_respond
-from app.utils.monitoring import log_prediction
+from app.models.model_store import get_chat_model
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
 
+CANDIDATE_LABELS = [
+    "verify certificate",
+    "report fraud or tampering",
+    "check trust score",
+    "get course recommendations",
+    "general help",
+]
 
-class ChatInput(BaseModel):
+RESPONSES = {
+    "verify certificate": (
+        "To verify a certificate, upload it via the SmartCertify dashboard or "
+        "submit the certificate ID. Our AI checks authenticity using an RF+XGB+LGB "
+        "ensemble trained on 4,000 certificate records and cross-references issuer records."
+    ),
+    "report fraud or tampering": (
+        "If you suspect a certificate is fraudulent or tampered, use the Image Analysis "
+        "tool — our ResNet-18 CNN detects pixel-level modifications with high accuracy. "
+        "You can also flag the certificate for manual review from the dashboard."
+    ),
+    "check trust score": (
+        "Trust scores are computed for issuers using a Gradient Boosting model based on "
+        "historical fraud rates, domain age, verification success rate, and metadata "
+        "completeness. Scores range from 0 (untrusted) to 1 (fully trusted). "
+        "Grade A ≥ 0.8, B ≥ 0.6, C ≥ 0.4, D < 0.4."
+    ),
+    "get course recommendations": (
+        "SmartCertify recommends follow-up courses based on your completed certificates "
+        "using BERT semantic similarity. Visit the Recommendations section in your "
+        "dashboard and ensure your completed courses are listed in your profile."
+    ),
+    "general help": (
+        "SmartCertify helps you verify, manage, and issue certificates securely. "
+        "I can help you with: certificate verification, fraud & tampering detection, "
+        "issuer trust scores, duplicate detection, and course recommendations. "
+        "What would you like to know?"
+    ),
+}
+
+
+class ChatRequest(BaseModel):
     message: str
-    session_id: Optional[str] = "default"
+    session_id: Optional[str] = None
 
 
 @router.post("/chat")
-async def chat_endpoint(
-    data: ChatInput,
-    api_key: str = Depends(verify_api_key),
+async def chat(
+    req: ChatRequest,
+    _: str = Depends(verify_api_key),
 ):
-    """AI chatbot for certificate-related queries."""
-    start_time = time.time()
+    t0 = time.time()
+    classifier = get_chat_model()
 
-    result = chatbot_respond(
-        query=data.message,
-        session_id=data.session_id,
-    )
+    result = classifier(req.message, candidate_labels=CANDIDATE_LABELS)
+    top_label: str = result["labels"][0]
+    top_score: float = float(result["scores"][0])
 
-    latency_ms = (time.time() - start_time) * 1000
+    response_text = RESPONSES.get(top_label, RESPONSES["general help"])
 
-    log_prediction(
-        endpoint="/api/ml/chat",
-        input_data={"message": data.message},
-        prediction=result,
-        confidence=result.get("confidence", 0),
-        latency_ms=latency_ms,
-    )
-
-    result["latency_ms"] = round(latency_ms, 1)
-    return result
+    return {
+        "response": response_text,
+        "confidence": round(top_score, 4),
+        "source": f"DistilBERT zero-shot → '{top_label}'",
+        "latency_ms": round((time.time() - t0) * 1000, 2),
+    }

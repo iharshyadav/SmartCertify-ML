@@ -18,20 +18,26 @@ env/
 *.swp
 *.swo
 
-# ML artifacts (regenerated at build time)
-saved_models/
+# Local env
+.env
+.env.local
+
+# Build artifacts — regenerated at Docker build time
 plots/
 logs/
 data/*.csv
-*.joblib
-*.pt
 
-# Database
-predictions.db
+# DO NOT IGNORE saved_models — .pkl/.pt files must be committed for HF Spaces
+# saved_models/   <-- this line must NOT exist here
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Environment
-.env
+# Database
+predictions.db
+
+# Pytest
+.pytest_cache/
+*.pyc
+*.pyo

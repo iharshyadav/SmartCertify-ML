@@ -1,79 +1,124 @@
 """
-SmartCertify ML — Fraud Detection API Route
-POST /api/ml/verify
+fraud_detection.py — Certificate fraud detection endpoint.
+POST /api/ml/verify — RF + XGB + LGB ensemble.
 """
+from __future__ import annotations
 
 import time
-import logging
-from typing import Optional
+from typing import List, Optional
+
+import numpy as np
+import pandas as pd
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.api.middleware.auth import verify_api_key
-from app.models.fraud_detection.predict import predict_fraud
-from app.models.fraud_detection.explain import explain_prediction
-from app.data.preprocess import preprocess_single
-from app.utils.monitoring import log_prediction
+from app.models.model_store import get_fraud_models
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-class CertificateInput(BaseModel):
-    issuer_name: Optional[str] = "Unknown"
-    recipient_name: Optional[str] = "Unknown"
-    course_name: Optional[str] = "Unknown"
-    issue_date: Optional[str] = None
+class VerifyRequest(BaseModel):
+    issuer_name: str
+    recipient_name: str
+    course_name: str
+    issue_date: str
     expiry_date: Optional[str] = None
-    credential_hash: Optional[str] = None
-    issuer_reputation_score: Optional[float] = Field(None, ge=0, le=1)
-    certificate_age_days: Optional[int] = None
-    metadata_completeness_score: Optional[float] = Field(None, ge=0, le=1)
-    ocr_confidence_score: Optional[float] = Field(None, ge=0, le=1)
-    template_match_score: Optional[float] = Field(None, ge=0, le=1)
-    domain_verification_status: Optional[int] = Field(None, ge=0, le=1)
-    previous_verification_count: Optional[int] = None
-    time_since_last_verification_days: Optional[float] = None
+    issuer_reputation_score: Optional[float] = 0.5
+    template_match_score: Optional[float] = 0.5
+    metadata_completeness_score: Optional[float] = 0.5
+    domain_verification_status: Optional[int] = 1
+    previous_verification_count: Optional[int] = 0
+
+
+def _risk_level(prob: float) -> str:
+    if prob < 0.2:
+        return "LOW"
+    if prob < 0.5:
+        return "MEDIUM"
+    if prob < 0.8:
+        return "HIGH"
+    return "CRITICAL"
+
+
+def _build_risk_flags(req: VerifyRequest) -> List[str]:
+    flags = []
+    if (req.issuer_reputation_score or 0.5) < 0.3:
+        flags.append("Low issuer reputation score")
+    if (req.template_match_score or 0.5) < 0.4:
+        flags.append("Template mismatch detected")
+    if (req.metadata_completeness_score or 0.5) < 0.5:
+        flags.append("Incomplete certificate metadata")
+    if (req.domain_verification_status or 1) == 0:
+        flags.append("Issuer domain not verified")
+    if (req.previous_verification_count or 0) == 0:
+        flags.append("No prior verification history")
+    return flags
 
 
 @router.post("/verify")
 async def verify_certificate(
-    cert: CertificateInput,
-    api_key: str = Depends(verify_api_key),
+    req: VerifyRequest,
+    _: str = Depends(verify_api_key),
 ):
-    """Verify a certificate for fraud detection."""
-    start_time = time.time()
+    t0 = time.time()
+    store = get_fraud_models()
+    feature_cols: list = store["features"]
 
-    cert_data = cert.model_dump(exclude_none=False)
+    # Build input feature vector (fill missing with defaults)
+    input_dict = {
+        "issuer_reputation_score":    req.issuer_reputation_score or 0.5,
+        "template_match_score":       req.template_match_score or 0.5,
+        "metadata_completeness_score": req.metadata_completeness_score or 0.5,
+        "domain_verification_status": req.domain_verification_status if req.domain_verification_status is not None else 1,
+        "previous_verification_count": req.previous_verification_count or 0,
+        "cert_age_days":              0,
+        "issuer_cert_count":          1000,
+        "has_expiry":                 int(bool(req.expiry_date)),
+        "name_length":                len(req.recipient_name),
+        "course_name_length":         len(req.course_name),
+        "total_certificates_issued":  5000,
+        "fraud_rate_historical":      0.02,
+        "avg_metadata_completeness":  req.metadata_completeness_score or 0.5,
+        "domain_age_days":            365,
+        "verification_success_rate":  0.9,
+    }
+    X = pd.DataFrame([input_dict])[feature_cols].fillna(0)
 
-    # Run prediction
-    result = predict_fraud(cert_data)
+    # Ensemble predictions
+    rf, xgb_m, lgb_m = store["rf"], store["xgb"], store["lgb"]
 
-    if "error" not in result:
-        # Add SHAP explanation
-        try:
-            X = preprocess_single(cert_data)
-            explanation = explain_prediction(X)
-            result["shap_explanation"] = explanation.get("top_features", [])
-            result["top_3_features"] = [
-                {"feature": f["feature"], "impact": f.get("impact_direction", f.get("importance", ""))}
-                for f in explanation.get("top_features", [])[:3]
-            ]
-        except Exception as e:
-            logger.warning(f"SHAP explanation failed: {e}")
-            result["shap_explanation"] = []
-            result["top_3_features"] = []
+    rf_proba  = rf.predict_proba(X)[0]
+    xgb_proba = xgb_m.predict_proba(X)[0]
+    lgb_proba = lgb_m.predict_proba(X)[0]
 
-    latency_ms = (time.time() - start_time) * 1000
+    # Average probabilities across models
+    avg_proba = (rf_proba + xgb_proba + lgb_proba) / 3.0
 
-    # Log prediction
-    log_prediction(
-        endpoint="/api/ml/verify",
-        input_data=cert_data,
-        prediction=result,
-        confidence=result.get("confidence_score", 0),
-        latency_ms=latency_ms,
-    )
+    # label_map: {"authentic": idx, "fake": idx, "tampered": idx}
+    label_map: dict = store["label_map"]
+    auth_idx = label_map.get("authentic", 0)
 
-    result["latency_ms"] = round(latency_ms, 1)
-    return result
+    # fraud_probability = P(not authentic)
+    fraud_prob = float(1.0 - avg_proba[auth_idx])
+    confidence = float(avg_proba.max())
+
+    # Majority vote label
+    votes = [
+        rf.predict(X)[0],
+        xgb_m.predict(X)[0],
+        lgb_m.predict(X)[0],
+    ]
+    final_label_idx = max(set(votes), key=votes.count)
+    inv_map = {v: k for k, v in label_map.items()}
+    final_label = inv_map.get(final_label_idx, "authentic")
+
+    return {
+        "is_authentic": final_label == "authentic",
+        "fraud_probability": round(fraud_prob, 4),
+        "confidence_score": round(confidence, 4),
+        "risk_level": _risk_level(fraud_prob),
+        "risk_flags": _build_risk_flags(req),
+        "model_used": "RF+XGB+LGB Ensemble",
+        "latency_ms": round((time.time() - t0) * 1000, 2),
+    }

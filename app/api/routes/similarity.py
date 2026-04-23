@@ -1,73 +1,57 @@
 """
-SmartCertify ML — Similarity API Route
-POST /api/ml/similarity
+similarity.py — Certificate duplicate detection.
+POST /api/ml/similarity — BERT sentence-transformers cosine similarity.
 """
+from __future__ import annotations
 
 import time
-import logging
-from typing import Optional, Dict, Any
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sklearn.metrics.pairwise import cosine_similarity
 
 from app.api.middleware.auth import verify_api_key
-from app.models.similarity.tfidf_model import find_similar
-from app.utils.monitoring import log_prediction
+from app.models.model_store import get_similarity_model
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-class CertificateData(BaseModel):
-    issuer_name: Optional[str] = ""
-    recipient_name: Optional[str] = ""
-    course_name: Optional[str] = ""
+class SimilarityRequest(BaseModel):
+    cert_a: dict  # {issuer_name?, recipient_name?, course_name?}
+    cert_b: dict
 
 
-class SimilarityInput(BaseModel):
-    cert_a: CertificateData
-    cert_b: CertificateData
-    method: Optional[str] = "tfidf"
+def _cert_to_text(c: dict) -> str:
+    parts = [
+        c.get("issuer_name", ""),
+        c.get("recipient_name", ""),
+        c.get("course_name", ""),
+    ]
+    return " ".join(p for p in parts if p).strip() or "unknown"
 
 
 @router.post("/similarity")
 async def check_similarity(
-    data: SimilarityInput,
-    api_key: str = Depends(verify_api_key),
+    req: SimilarityRequest,
+    _: str = Depends(verify_api_key),
 ):
-    """Check similarity between two certificates."""
-    start_time = time.time()
+    t0 = time.time()
+    model = get_similarity_model()
 
-    cert_a = data.cert_a.model_dump()
-    cert_b = data.cert_b.model_dump()
+    text_a = _cert_to_text(req.cert_a)
+    text_b = _cert_to_text(req.cert_b)
 
-    result = find_similar(
-        certificate=cert_a,
-        corpus=[cert_b],
-        top_n=1,
-        threshold=0.0,
-    )
+    # Encode both texts → (1, 384) embeddings
+    emb_a = model.encode([text_a])
+    emb_b = model.encode([text_b])
 
-    latency_ms = (time.time() - start_time) * 1000
+    score = float(cosine_similarity(emb_a, emb_b)[0][0])
+    # Clamp to [0, 1] (cosine can be slightly negative for very different texts)
+    score = max(0.0, min(1.0, score))
 
-    # Simplify response
-    similarity_score = 0.0
-    if result.get("similar_certificates"):
-        similarity_score = result["similar_certificates"][0].get("similarity_score", 0)
-
-    response = {
-        "similarity_score": similarity_score,
-        "is_duplicate": similarity_score > 0.9,
-        "method": "tfidf",
-        "details": result,
+    return {
+        "similarity_score": round(score, 4),
+        "is_duplicate": score > 0.85,
+        "method": "BERT sentence-transformers (all-MiniLM-L6-v2)",
+        "latency_ms": round((time.time() - t0) * 1000, 2),
     }
-
-    log_prediction(
-        endpoint="/api/ml/similarity",
-        input_data={"cert_a": cert_a, "cert_b": cert_b},
-        prediction=response,
-        confidence=similarity_score,
-        latency_ms=latency_ms,
-    )
-
-    response["latency_ms"] = round(latency_ms, 1)
-    return response

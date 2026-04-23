@@ -1,51 +1,93 @@
 """
-SmartCertify ML — Recommendations API Route
+recommendations.py — Course recommendations using BERT semantic similarity.
 POST /api/ml/recommend
 """
+from __future__ import annotations
 
 import time
-import logging
 from typing import List, Optional
+
+import numpy as np
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from sklearn.metrics.pairwise import cosine_similarity
 
 from app.api.middleware.auth import verify_api_key
-from app.models.recommendation.recommender import get_recommendations
-from app.utils.monitoring import log_prediction
+from app.models.model_store import get_similarity_model
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
 
+COURSE_CATALOG = [
+    "B.Tech Computer Science",
+    "B.Tech Information Technology",
+    "M.Tech AI & Machine Learning",
+    "MBA Business Analytics",
+    "Full Stack Web Development",
+    "Cloud Computing & DevOps",
+    "Cybersecurity Fundamentals",
+    "React & Next.js Advanced",
+    "Python for Data Science",
+    "Blockchain & Web3 Development",
+    "UI/UX Design Principles",
+    "Project Management Professional",
+    "System Design & Architecture",
+    "Database Engineering",
+    "Mobile App Development",
+    "Data Engineering with Spark",
+    "MLOps & Model Deployment",
+    "DevSecOps Practices",
+    "Microservices Architecture",
+    "API Design & Development",
+]
 
-class RecommendationInput(BaseModel):
+
+class RecommendRequest(BaseModel):
     student_id: str
-    completed_courses: List[str] = []
-    n_recommendations: Optional[int] = 5
+    completed_courses: Optional[List[str]] = []
 
 
 @router.post("/recommend")
-async def recommend_certificates(
-    data: RecommendationInput,
-    api_key: str = Depends(verify_api_key),
+async def get_recommendations(
+    req: RecommendRequest,
+    _: str = Depends(verify_api_key),
 ):
-    """Get certificate/course recommendations for a student."""
-    start_time = time.time()
+    t0 = time.time()
+    completed = [c.strip() for c in (req.completed_courses or []) if c.strip()]
 
-    result = get_recommendations(
-        student_id=data.student_id,
-        completed_courses=data.completed_courses,
-        n_recommendations=data.n_recommendations,
-    )
+    # Candidates = catalog minus completed courses
+    candidates = [c for c in COURSE_CATALOG if c not in completed]
 
-    latency_ms = (time.time() - start_time) * 1000
+    if not candidates:
+        return {
+            "student_id": req.student_id,
+            "recommendations": [],
+            "method": "sentence-transformers semantic similarity",
+            "latency_ms": round((time.time() - t0) * 1000, 2),
+        }
 
-    log_prediction(
-        endpoint="/api/ml/recommend",
-        input_data=data.model_dump(),
-        prediction=result,
-        confidence=1.0,
-        latency_ms=latency_ms,
-    )
+    if not completed:
+        # No history → return top 5 from catalog
+        recommendations = candidates[:5]
+    else:
+        model = get_similarity_model()
 
-    result["latency_ms"] = round(latency_ms, 1)
-    return result
+        # Encode completed courses → average embedding
+        completed_embs = model.encode(completed)  # (n, 384)
+        student_emb = np.mean(completed_embs, axis=0, keepdims=True)  # (1, 384)
+
+        # Encode candidates
+        candidate_embs = model.encode(candidates)  # (m, 384)
+
+        # Cosine similarity between student profile and each candidate
+        sims = cosine_similarity(student_emb, candidate_embs)[0]  # (m,)
+
+        # Sort by descending similarity, take top 5
+        top_indices = np.argsort(sims)[::-1][:5]
+        recommendations = [candidates[i] for i in top_indices]
+
+    return {
+        "student_id": req.student_id,
+        "recommendations": recommendations,
+        "method": "sentence-transformers semantic similarity",
+        "latency_ms": round((time.time() - t0) * 1000, 2),
+    }

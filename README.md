@@ -1,115 +1,66 @@
+---
+title: SmartCertify ML
+emoji: 🎓
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+pinned: false
+license: mit
+app_port: 7860
+---
+
 # SmartCertify ML Microservice
 
-> Blockchain + AI powered Certificate Verification Platform — ML Service
+FastAPI ML service for AI-powered certificate fraud detection.
 
-## Overview
+**Upgraded from Render (lightweight) → Hugging Face Spaces (full models):**
+- Image tampering: ResNet-18 CNN (fine-tuned) — NOT ELA stats
+- Similarity: BERT sentence-transformers (all-MiniLM-L6-v2) — NOT TF-IDF
+- Chat: DistilBERT zero-shot classification — NOT keyword matching
 
-SmartCertify ML is a standalone Python microservice that provides machine learning capabilities for the SmartCertify platform. It integrates with the Express.js backend via REST API.
+## Endpoints
 
-## Features
-
-- **Certificate Fraud Detection** — Ensemble ML models (RF + XGBoost + LightGBM + Neural Net)
-- **Similarity Analysis** — TF-IDF + BERT semantic similarity for duplicate detection
-- **Issuer Trust Scoring** — Regression models for institutional trust assessment
-- **Image Tampering Detection** — CNN (ResNet-18) for certificate image analysis
-- **Anomaly Detection** — Isolation Forest for suspicious pattern identification
-- **Recommendation Engine** — Content + collaborative filtering for course suggestions
-- **AI Chatbot** — Transformer-based QA for certificate queries
-- **Model Monitoring** — Prediction logging, drift detection, performance metrics
-
-## Quick Start
-
-```bash
-# 1. Install dependencies
-pip install -r requirements.txt
-
-# 2. Generate synthetic data
-python -m app.data.generate_synthetic
-
-# 3. Train models
-python -m app.models.fraud_detection.train
-
-# 4. Start the server
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-## API Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | Service health check |
-| POST | `/api/ml/verify` | Certificate fraud detection |
-| POST | `/api/ml/similarity` | Certificate similarity check |
-| POST | `/api/ml/trust-score` | Issuer trust scoring |
-| POST | `/api/ml/analyze-image` | Image tampering detection |
-| POST | `/api/ml/recommend` | Certificate recommendations |
-| POST | `/api/ml/anomaly` | Anomaly detection |
-| POST | `/api/ml/chat` | AI chatbot |
-| GET | `/api/ml/metrics` | Model performance metrics |
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Health check |
+| POST | `/api/ml/verify` | Fraud detection — RF+XGB+LGB ensemble |
+| POST | `/api/ml/analyze-image` | Tampering detection — ResNet-18 CNN |
+| POST | `/api/ml/similarity` | Duplicate detection — BERT cosine |
+| POST | `/api/ml/trust-score` | Issuer trust — Gradient Boosting |
+| POST | `/api/ml/anomaly` | Anomaly detection — Isolation Forest |
+| POST | `/api/ml/chat` | Q&A chatbot — DistilBERT zero-shot |
+| POST | `/api/ml/recommend` | Course recs — BERT similarity |
+| GET | `/api/ml/metrics` | Model metrics |
 
 ## Authentication
 
-All API endpoints require an `X-API-Key` header:
+All endpoints require `X-API-Key` header.
+Set `ML_API_KEY` as a Space secret in HF settings.
+
+## Models
+
+All trained at Docker build time (baked into image):
+
+| Model | Type | Size |
+|-------|------|------|
+| Fraud detection | RF + XGBoost + LightGBM | ~15 MB |
+| Image tampering | ResNet-18 (fine-tuned, CPU) | ~45 MB |
+| Semantic similarity | all-MiniLM-L6-v2 | ~90 MB |
+| Chat classification | DistilBERT zero-shot | ~66 MB |
+| Trust scoring | Gradient Boosting | ~2 MB |
+| Anomaly detection | Isolation Forest | ~1 MB |
+
+## Local Development
 
 ```bash
-curl -X POST http://localhost:8000/api/ml/verify \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: your_secret_key_here" \
-  -d '{"issuer_reputation_score": 0.9, ...}'
+docker build -t smartcertify-ml .
+docker run -p 7860:7860 -e ML_API_KEY=dev-key smartcertify-ml
+curl http://localhost:7860/health
 ```
 
-## Docker
+## Deploy to HF Spaces
 
 ```bash
-docker-compose up --build
+git remote add hf https://huggingface.co/spaces/YOUR_USERNAME/SmartCertify-ML
+git push hf main
 ```
-
-## Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ML_API_KEY` | API key for authentication | `smartcertify-dev-key` |
-| `LOG_LEVEL` | Logging level | `INFO` |
-| `MODEL_DIR` | Model storage directory | `saved_models` |
-| `REDIS_URL` | Redis connection URL | `redis://localhost:6379` |
-
-## Project Structure
-
-```
-smartcertify-ml/
-├── app/
-│   ├── main.py                 # FastAPI entry point
-│   ├── api/routes/             # API route handlers
-│   ├── models/                 # ML model modules
-│   ├── data/                   # Data generation & preprocessing
-│   ├── utils/                  # Utilities (math, viz, IO, monitoring)
-│   └── config/                 # Settings & model registry
-├── saved_models/               # Serialized model files
-├── tests/                      # Unit tests
-├── Dockerfile
-├── docker-compose.yml
-└── requirements.txt
-```
-
-## Integration with Express Backend
-
-```typescript
-const ML_SERVICE_URL = process.env.ML_SERVICE_URL || "http://localhost:8000";
-const ML_API_KEY = process.env.ML_API_KEY;
-
-async function verifyCertificate(certFeatures: object) {
-  const response = await fetch(`${ML_SERVICE_URL}/api/ml/verify`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-API-Key": ML_API_KEY
-    },
-    body: JSON.stringify(certFeatures)
-  });
-  return response.json();
-}
-```
-
-## License
-
-MIT

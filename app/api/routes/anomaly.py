@@ -1,58 +1,82 @@
 """
-SmartCertify ML — Anomaly Detection API Route
-POST /api/ml/anomaly
+anomaly.py — Batch anomaly detection on certificate records.
+POST /api/ml/anomaly — Isolation Forest.
 """
+from __future__ import annotations
 
 import time
-import logging
-from typing import Optional
+from typing import List
+
+import numpy as np
+import pandas as pd
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.api.middleware.auth import verify_api_key
-from app.models.anomaly.isolation_forest import detect_anomaly
-from app.utils.monitoring import log_prediction
+from app.models.model_store import get_anomaly_models
 
-logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-class AnomalyInput(BaseModel):
-    issuer_reputation_score: Optional[float] = Field(None, ge=0, le=1)
-    certificate_age_days: Optional[int] = None
-    metadata_completeness_score: Optional[float] = Field(None, ge=0, le=1)
-    ocr_confidence_score: Optional[float] = Field(None, ge=0, le=1)
-    template_match_score: Optional[float] = Field(None, ge=0, le=1)
-    domain_verification_status: Optional[int] = Field(None, ge=0, le=1)
-    previous_verification_count: Optional[int] = None
-    time_since_last_verification_days: Optional[float] = None
+class AnomalyRequest(BaseModel):
+    certificates: List[dict]
 
 
 @router.post("/anomaly")
-async def detect_certificate_anomaly(
-    data: AnomalyInput,
-    api_key: str = Depends(verify_api_key),
+async def detect_anomaly(
+    req: AnomalyRequest,
+    _: str = Depends(verify_api_key),
 ):
-    """Detect anomalous certificate patterns."""
-    start_time = time.time()
+    t0 = time.time()
+    store = get_anomaly_models()
+    feature_cols: list = store["features"]
+    scaler = store["scaler"]
+    model = store["model"]
 
-    cert_data = data.model_dump(exclude_none=False)
-    # Replace None values with 0 for the model
-    for k, v in cert_data.items():
-        if v is None:
-            cert_data[k] = 0
+    certs = req.certificates
+    if not certs:
+        return {
+            "total": 0,
+            "anomalies_found": 0,
+            "anomaly_indices": [],
+            "results": [],
+            "latency_ms": round((time.time() - t0) * 1000, 2),
+        }
 
-    result = detect_anomaly(cert_data)
+    # Build feature matrix (fill missing with 0)
+    rows = []
+    for c in certs:
+        row = {col: float(c.get(col, 0) or 0) for col in feature_cols}
+        rows.append(row)
 
-    latency_ms = (time.time() - start_time) * 1000
+    X = pd.DataFrame(rows)[feature_cols].fillna(0)
+    X_scaled = scaler.transform(X)
 
-    log_prediction(
-        endpoint="/api/ml/anomaly",
-        input_data=cert_data,
-        prediction=result,
-        confidence=abs(result.get("anomaly_score", 0)),
-        latency_ms=latency_ms,
+    # IsolationForest: -1 = anomaly, 1 = normal
+    preds = model.predict(X_scaled)
+    scores = model.score_samples(X_scaled)  # lower = more anomalous
+
+    # Normalise anomaly score to [0, 1] where 1 = most anomalous
+    scores_norm = 1.0 - (
+        (scores - scores.min()) / (scores.max() - scores.min() + 1e-8)
     )
 
-    result["latency_ms"] = round(latency_ms, 1)
-    return result
+    results = []
+    anomaly_indices = []
+    for i, (pred, score) in enumerate(zip(preds, scores_norm)):
+        is_anomaly = pred == -1
+        if is_anomaly:
+            anomaly_indices.append(i)
+        results.append({
+            "index": i,
+            "is_anomaly": is_anomaly,
+            "anomaly_score": round(float(score), 4),
+        })
+
+    return {
+        "total": len(certs),
+        "anomalies_found": len(anomaly_indices),
+        "anomaly_indices": anomaly_indices,
+        "results": results,
+        "latency_ms": round((time.time() - t0) * 1000, 2),
+    }
