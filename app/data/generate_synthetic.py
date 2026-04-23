@@ -205,21 +205,42 @@ def _make_fake() -> Dict[str, Any]:
     }
 
 
-def generate_all() -> pd.DataFrame:
-    records: List[Dict] = []
-    for _ in range(2000):
-        records.append(_make_authentic())
-    for _ in range(1200):
-        records.append(_make_tampered())
-    for _ in range(800):
-        records.append(_make_fake())
+def generate_all(
+    n_authentic: int = 12_500,
+    n_tampered: int = 7_500,
+    n_fake: int = 5_000,
+) -> pd.DataFrame:
+    """
+    Generate synthetic certificate data.
+    Default: 25,000 rows (50% authentic, 30% tampered, 20% fake).
+    Increase numbers for more data — runs in seconds.
+    """
+    print(f"  Generating {n_authentic} authentic...")
+    records: List[Dict] = [_make_authentic() for _ in range(n_authentic)]
+    print(f"  Generating {n_tampered} tampered...")
+    records += [_make_tampered() for _ in range(n_tampered)]
+    print(f"  Generating {n_fake} fake...")
+    records += [_make_fake() for _ in range(n_fake)]
     random.shuffle(records)
     return pd.DataFrame(records)
 
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--authentic", type=int, default=12_500)
+    parser.add_argument("--tampered",  type=int, default=7_500)
+    parser.add_argument("--fake",      type=int, default=5_000)
+    args = parser.parse_args()
+
     os.makedirs("data", exist_ok=True)
-    df = generate_all()
+    df = generate_all(
+        n_authentic=args.authentic,
+        n_tampered=args.tampered,
+        n_fake=args.fake,
+    )
     df.to_csv("data/synthetic_certificates.csv", index=False)
-    print(f"Generated {len(df)} records -> data/synthetic_certificates.csv")
+    total = len(df)
+    print(f"Generated {total} records -> data/synthetic_certificates.csv")
     print(df["label"].value_counts().to_string())
+    print(f"\nColumns: {list(df.columns)}")

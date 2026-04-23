@@ -188,7 +188,7 @@ def train_image_model() -> None:
     from torch.utils.data import Dataset, DataLoader
     from app.utils.cert_image_gen import make_authentic_cert, apply_tampering
 
-    N_PER_CLASS = 400  # keep build time reasonable on HF free tier
+    N_PER_CLASS = 2_500  # 5,000 total images (2,500 authentic + 2,500 tampered)
 
     class CertDataset(Dataset):
         def __init__(self, n_per_class: int, transform=None):
