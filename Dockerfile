@@ -29,17 +29,15 @@ RUN mkdir -p saved_models plots logs data && \
           app/utils/__init__.py \
           app/config/__init__.py
 
-# Use offline mode at runtime — models downloaded at build time
-ENV TRANSFORMERS_OFFLINE=1
-ENV HF_DATASETS_OFFLINE=1
-
-# ── BUILD-TIME: generate data, download models, train everything ──
-
-# Step 1: Generate synthetic CSV data
+# ─────────────────────────────────────────────────────────────────────────────
+# BUILD STEP 1: Generate 25,000 synthetic CSV rows (no network needed)
+# ─────────────────────────────────────────────────────────────────────────────
 RUN python -m app.data.generate_synthetic
 
-# Step 2: Pre-download HuggingFace models into cache
-# (baked into image so runtime never hits network)
+# ─────────────────────────────────────────────────────────────────────────────
+# BUILD STEP 2: Pre-download NLP models from HuggingFace
+# NOTE: NO offline env vars yet — we need network access here
+# ─────────────────────────────────────────────────────────────────────────────
 RUN python -c "\
 from sentence_transformers import SentenceTransformer; \
 from transformers import pipeline; \
@@ -47,13 +45,29 @@ print('Downloading all-MiniLM-L6-v2...'); \
 SentenceTransformer('all-MiniLM-L6-v2'); \
 print('Downloading DistilBERT zero-shot...'); \
 pipeline('zero-shot-classification', model='typeform/distilbert-base-uncased-mnli'); \
-print('All NLP models downloaded.') \
+print('NLP models downloaded.') \
 "
 
-# Step 3: Train all models (tabular + CNN + NLP)
+# ─────────────────────────────────────────────────────────────────────────────
+# BUILD STEP 3: Pre-download real certificate image datasets from HuggingFace
+# These will be cached in HF_HOME for use during training
+# ─────────────────────────────────────────────────────────────────────────────
+RUN python -c "\
+print('Pre-caching HF image datasets...'); \
+from app.data.load_hf_images import load_authentic_images, load_tampered_images; \
+auth = load_authentic_images(n_max=300); \
+tamp = load_tampered_images(n_max=150); \
+print(f'Cached {len(auth)} authentic + {len(tamp)} tampered images'); \
+"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BUILD STEP 4: Train all models (uses cached data — no network calls)
+# ─────────────────────────────────────────────────────────────────────────────
 RUN python -m app.models.train_all
 
-# Step 4: Verify every model file exists — fail build if missing
+# ─────────────────────────────────────────────────────────────────────────────
+# BUILD STEP 5: Verify all required model files exist — fail build if missing
+# ─────────────────────────────────────────────────────────────────────────────
 RUN python -c "\
 import os; \
 from pathlib import Path; \
@@ -72,12 +86,18 @@ required = [ \
     'saved_models/similarity_model_name.txt', \
 ]; \
 missing = [f for f in required if not os.path.exists(f)]; \
-print('Build failed — missing:', missing) if missing else None; \
-assert not missing; \
+assert not missing, f'Build failed - missing: {missing}'; \
 files = list(Path('saved_models').iterdir()); \
-print(f'Build OK — {len(files)} model files saved'); \
+print(f'Build OK - {len(files)} model files saved'); \
 [print(f'  {f.name}: {f.stat().st_size/1024:.1f} KB') for f in sorted(files)] \
 "
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NOW set offline mode — only takes effect at RUNTIME, not during build steps
+# This prevents any network calls per inference request
+# ─────────────────────────────────────────────────────────────────────────────
+ENV TRANSFORMERS_OFFLINE=1
+ENV HF_DATASETS_OFFLINE=1
 
 EXPOSE 7860
 

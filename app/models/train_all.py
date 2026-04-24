@@ -178,7 +178,7 @@ def train_anomaly_model(df: pd.DataFrame) -> None:
 
 def train_image_model() -> None:
     print("\n" + "=" * 50)
-    print("6B — Training ResNet-18 CNN for Image Tampering")
+    print("6B — Training ResNet-18 CNN for Image Tampering (Hybrid Dataset)")
     print("=" * 50)
 
     import torch
@@ -187,33 +187,90 @@ def train_image_model() -> None:
     import torchvision.transforms as transforms
     from torch.utils.data import Dataset, DataLoader
     from app.utils.cert_image_gen import make_authentic_cert, apply_tampering
+    from app.data.load_hf_images import load_authentic_images, load_tampered_images
 
-    N_PER_CLASS = 2_500  # 5,000 total images (2,500 authentic + 2,500 tampered)
+    # ── Step 1: Load real HF images (fills domain gap for presentation) ───────
+    print("\n  [Phase 1] Loading real certificate images from HuggingFace...")
+    real_authentic = load_authentic_images(n_max=300)   # real cert images
+    real_tampered  = load_tampered_images(n_max=150)    # real tampered images
 
-    class CertDataset(Dataset):
-        def __init__(self, n_per_class: int, transform=None):
-            self.data = []
-            self.labels = []
-            self.transform = transform
-            print(f"  Generating {n_per_class * 2} synthetic certificate images...")
-            for i in range(n_per_class):
-                self.data.append(make_authentic_cert())
-                self.labels.append(0)
-                self.data.append(apply_tampering(make_authentic_cert()))
-                self.labels.append(1)
-                if (i + 1) % 100 == 0:
-                    print(f"  {(i+1)*2}/{n_per_class*2} images generated")
+    # Apply our tampering functions to the real authentic images
+    # This is the key bridge: real pixels + our tampering patterns
+    tampered_from_real = []
+    for img in real_authentic[:200]:
+        try:
+            tampered_from_real.append(apply_tampering(img))
+        except Exception:
+            pass
+    print(f"  Created {len(tampered_from_real)} tampered versions of real certs")
 
-        def __len__(self):
-            return len(self.data)
+    # ── Step 2: Generate synthetic PIL images to fill volume ──────────────────
+    N_SYNTHETIC_PER_CLASS = 2_500  # 5,000 synthetic images
+    print(f"\n  [Phase 2] Generating {N_SYNTHETIC_PER_CLASS * 2} synthetic images...")
 
-        def __getitem__(self, idx):
-            img = self.data[idx]
-            if self.transform:
-                img = self.transform(img)
-            return img, self.labels[idx]
+    all_images = []   # PIL Images
+    all_labels = []   # 0 = authentic, 1 = tampered
 
+    # Add real authentic images (class 0)
+    for img in real_authentic:
+        all_images.append(img)
+        all_labels.append(0)
+
+    # Add real tampered images (class 1)
+    for img in real_tampered:
+        all_images.append(img)
+        all_labels.append(1)
+
+    # Add tampered-from-real (class 1)
+    for img in tampered_from_real:
+        all_images.append(img)
+        all_labels.append(1)
+
+    # Fill with synthetic to reach N_SYNTHETIC_PER_CLASS per class
+    n_real_authentic = len(real_authentic)
+    n_real_tampered  = len(real_tampered) + len(tampered_from_real)
+
+    n_synth_authentic = max(0, N_SYNTHETIC_PER_CLASS - n_real_authentic)
+    n_synth_tampered  = max(0, N_SYNTHETIC_PER_CLASS - n_real_tampered)
+
+    for i in range(n_synth_authentic):
+        all_images.append(make_authentic_cert())
+        all_labels.append(0)
+        if (i + 1) % 500 == 0:
+            print(f"  Synthetic authentic: {i+1}/{n_synth_authentic}")
+
+    for i in range(n_synth_tampered):
+        all_images.append(apply_tampering(make_authentic_cert()))
+        all_labels.append(1)
+        if (i + 1) % 500 == 0:
+            print(f"  Synthetic tampered:  {i+1}/{n_synth_tampered}")
+
+    # Count breakdown
+    n_auth  = all_labels.count(0)
+    n_tamp  = all_labels.count(1)
+    print(f"\n  Dataset breakdown:")
+    print(f"    Authentic images : {n_auth} "
+          f"({len(real_authentic)} real + {n_auth - len(real_authentic)} synthetic)")
+    print(f"    Tampered images  : {n_tamp} "
+          f"({len(real_tampered) + len(tampered_from_real)} real + "
+          f"{n_tamp - len(real_tampered) - len(tampered_from_real)} synthetic)")
+    print(f"    TOTAL            : {len(all_images)} images")
+
+    # ── Step 3: Build PyTorch Dataset ─────────────────────────────────────────
     transform = transforms.Compose([
+        transforms.Resize((224, 224)),
+        transforms.RandomHorizontalFlip(p=0.3),       # augmentation
+        transforms.RandomRotation(degrees=5),          # augmentation
+        transforms.ColorJitter(brightness=0.2,         # augmentation
+                               contrast=0.2),
+        transforms.ToTensor(),
+        transforms.Normalize(
+            mean=[0.485, 0.456, 0.406],
+            std=[0.229, 0.224, 0.225],
+        ),
+    ])
+
+    val_transform = transforms.Compose([
         transforms.Resize((224, 224)),
         transforms.ToTensor(),
         transforms.Normalize(
@@ -222,21 +279,45 @@ def train_image_model() -> None:
         ),
     ])
 
-    dataset = CertDataset(n_per_class=N_PER_CLASS, transform=transform)
-    train_size = int(0.8 * len(dataset))
-    val_size = len(dataset) - train_size
-    train_ds, val_ds = torch.utils.data.random_split(
-        dataset, [train_size, val_size],
-        generator=torch.Generator().manual_seed(42),
-    )
+    class HybridDataset(Dataset):
+        def __init__(self, images, labels, transform=None):
+            self.images = images
+            self.labels = labels
+            self.transform = transform
 
-    train_loader = DataLoader(train_ds, batch_size=16, shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_ds, batch_size=16, shuffle=False, num_workers=0)
+        def __len__(self):
+            return len(self.images)
 
-    # ResNet-18 — freeze early layers, train layer4 + new FC head
+        def __getitem__(self, idx):
+            img = self.images[idx]
+            if self.transform:
+                img = self.transform(img)
+            return img, self.labels[idx]
+
+    # Shuffle and split
+    import random as _random
+    combined = list(zip(all_images, all_labels))
+    _random.seed(42)
+    _random.shuffle(combined)
+    all_images, all_labels = zip(*combined)
+
+    split = int(0.8 * len(all_images))
+    train_imgs,  val_imgs  = list(all_images[:split]),  list(all_images[split:])
+    train_lbls,  val_lbls  = list(all_labels[:split]),  list(all_labels[split:])
+
+    train_ds = HybridDataset(train_imgs, train_lbls, transform=transform)
+    val_ds   = HybridDataset(val_imgs,   val_lbls,   transform=val_transform)
+
+    train_loader = DataLoader(train_ds, batch_size=16, shuffle=True,  num_workers=0)
+    val_loader   = DataLoader(val_ds,   batch_size=16, shuffle=False, num_workers=0)
+
+    print(f"\n  Train: {len(train_ds)} | Val: {len(val_ds)}")
+
+    # ── Step 4: Fine-tune ResNet-18 ───────────────────────────────────────────
     device = torch.device("cpu")
     model = tv_models.resnet18(weights=tv_models.ResNet18_Weights.DEFAULT)
 
+    # Freeze everything except layer4 and fc
     for name, param in model.named_parameters():
         if "layer4" not in name and "fc" not in name:
             param.requires_grad = False
@@ -244,7 +325,7 @@ def train_image_model() -> None:
     model.fc = nn.Sequential(
         nn.Linear(model.fc.in_features, 256),
         nn.ReLU(),
-        nn.Dropout(0.3),
+        nn.Dropout(0.4),
         nn.Linear(256, 2),
     )
     model = model.to(device)
@@ -254,11 +335,14 @@ def train_image_model() -> None:
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=1e-4,
     )
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=3, gamma=0.5)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+        optimizer, T_max=10, eta_min=1e-6
+    )
 
     best_val_acc = 0.0
-    N_EPOCHS = 8
+    N_EPOCHS = 10  # more epochs for hybrid dataset
 
+    print("\n  Training ResNet-18...")
     for epoch in range(N_EPOCHS):
         model.train()
         train_loss = 0.0
@@ -280,7 +364,7 @@ def train_image_model() -> None:
                 total += labels.size(0)
         val_acc = correct / total
         scheduler.step()
-        print(f"  Epoch {epoch+1}/{N_EPOCHS} | "
+        print(f"  Epoch {epoch+1:2d}/{N_EPOCHS} | "
               f"loss: {train_loss/len(train_loader):.4f} | "
               f"val_acc: {val_acc:.4f}")
 
