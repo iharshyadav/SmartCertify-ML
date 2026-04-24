@@ -10,6 +10,9 @@ import sys
 import time
 from pathlib import Path
 
+# Fix joblib "found 0 physical cores" error in HF Spaces containers
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", "2")
+
 import joblib
 import numpy as np
 import pandas as pd
