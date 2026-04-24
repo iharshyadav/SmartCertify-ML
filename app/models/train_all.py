@@ -94,7 +94,7 @@ def train_fraud_model(df: pd.DataFrame) -> None:
     print("  Training XGBClassifier...")
     xgb_model = xgb.XGBClassifier(
         n_estimators=200, max_depth=6, learning_rate=0.1,
-        use_label_encoder=False, eval_metric="mlogloss",
+        eval_metric="mlogloss",
         random_state=42, verbosity=0,
     )
     xgb_model.fit(X_train, y_train)
@@ -208,7 +208,7 @@ def train_image_model() -> None:
     print(f"  Created {len(tampered_from_real)} tampered versions of real certs")
 
     # ── Step 2: Generate synthetic PIL images to fill volume ──────────────────
-    N_SYNTHETIC_PER_CLASS = 2_500  # 5,000 synthetic images
+    N_SYNTHETIC_PER_CLASS = 1_500  # 3,000 synthetic images — fits in HF build timeout
     print(f"\n  [Phase 2] Generating {N_SYNTHETIC_PER_CLASS * 2} synthetic images...")
 
     all_images = []   # PIL Images
@@ -343,7 +343,7 @@ def train_image_model() -> None:
     )
 
     best_val_acc = 0.0
-    N_EPOCHS = 10  # more epochs for hybrid dataset
+    N_EPOCHS = 5  # 5 epochs fits within HF Spaces 30-min build timeout
 
     print("\n  Training ResNet-18...")
     for epoch in range(N_EPOCHS):

@@ -61,9 +61,20 @@ print(f'Cached {len(auth)} authentic + {len(tamp)} tampered images'); \
 "
 
 # ─────────────────────────────────────────────────────────────────────────────
+# BUILD STEP 3.5: Pre-download ResNet18 weights
+# ─────────────────────────────────────────────────────────────────────────────
+RUN python -c "\
+import torchvision.models as tv_models; \
+print('Downloading ResNet18 weights...'); \
+tv_models.resnet18(weights=tv_models.ResNet18_Weights.DEFAULT); \
+print('ResNet18 weights downloaded.') \
+"
+
+# ─────────────────────────────────────────────────────────────────────────────
 # BUILD STEP 4: Train all models (uses cached data — no network calls)
 # ─────────────────────────────────────────────────────────────────────────────
 RUN python -m app.models.train_all
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # BUILD STEP 5: Verify all required model files exist — fail build if missing
