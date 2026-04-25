@@ -42,8 +42,12 @@ def get_fraud_models():
 # ── Image Tampering (ResNet-18 CNN) ───────────────────────────
 
 @lru_cache(maxsize=1)
-def get_image_model() -> nn.Module:
-    """Load ResNet-18 fine-tuned for binary tamper classification."""
+def get_image_model():
+    """Load ResNet-18 — returns None if model file not found (ELA fallback used)."""
+    import torch.nn as nn
+    state_path = MODEL_DIR / "image_model.pt"
+    if not state_path.exists():
+        return None  # image_analysis.py will use ELA heuristic
     m = tv_models.resnet18(weights=None)
     m.fc = nn.Sequential(
         nn.Linear(m.fc.in_features, 256),
@@ -51,12 +55,6 @@ def get_image_model() -> nn.Module:
         nn.Dropout(0.3),
         nn.Linear(256, 2),
     )
-    state_path = MODEL_DIR / "image_model.pt"
-    if not state_path.exists():
-        raise FileNotFoundError(
-            f"image_model.pt not found at {state_path}. "
-            "Rebuild Docker image to retrain."
-        )
     state = torch.load(str(state_path), map_location=DEVICE)
     m.load_state_dict(state)
     m.eval()
@@ -117,10 +115,14 @@ def get_anomaly_models():
 def load_all_models() -> None:
     """Preload all models into lru_cache at startup."""
     print("Preloading all models into memory...")
-    get_fraud_models();     print("  ✓ fraud models (RF+XGB+LGB)")
-    get_image_model();      print("  ✓ ResNet-18 CNN")
-    get_similarity_model(); print("  ✓ sentence-transformers")
-    get_chat_model();       print("  ✓ DistilBERT zero-shot")
-    get_trust_models();     print("  ✓ trust model (GBR)")
-    get_anomaly_models();   print("  ✓ anomaly model (IsoForest)")
+    get_fraud_models();     print("  \u2713 fraud models (RF+XGB+LGB)")
+    img = get_image_model()
+    if img is not None:
+        print("  \u2713 ResNet-18 CNN")
+    else:
+        print("  ~ image model not found — using ELA heuristic")
+    get_similarity_model(); print("  \u2713 sentence-transformers")
+    get_chat_model();       print("  \u2713 DistilBERT zero-shot")
+    get_trust_models();     print("  \u2713 trust model (GBR)")
+    get_anomaly_models();   print("  \u2713 anomaly model (IsoForest)")
     print("All models ready.")

@@ -208,7 +208,7 @@ def train_image_model() -> None:
     print(f"  Created {len(tampered_from_real)} tampered versions of real certs")
 
     # ── Step 2: Generate synthetic PIL images to fill volume ──────────────────
-    N_SYNTHETIC_PER_CLASS = 1_500  # 3,000 synthetic images — fits in HF build timeout
+    N_SYNTHETIC_PER_CLASS = 800  # 1600 synthetic images — fits safely in HF build memory
     print(f"\n  [Phase 2] Generating {N_SYNTHETIC_PER_CLASS * 2} synthetic images...")
 
     all_images = []   # PIL Images
@@ -466,9 +466,22 @@ def main() -> None:
     train_fraud_model(df)
     train_trust_model(df)
     train_anomaly_model(df)
-    train_image_model()
-    train_similarity_model(df)
-    setup_chat_model()
+
+    try:
+        train_image_model()
+    except Exception as e:
+        print(f"  WARNING: Image model training failed: {e}")
+        print("  Skipping image model — API will use heuristic fallback.")
+
+    try:
+        train_similarity_model(df)
+    except Exception as e:
+        print(f"  WARNING: Similarity model failed: {e}")
+
+    try:
+        setup_chat_model()
+    except Exception as e:
+        print(f"  WARNING: Chat model setup failed: {e}")
 
     elapsed = time.time() - t0
     print("\n" + "=" * 60)
