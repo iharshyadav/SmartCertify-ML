@@ -188,9 +188,13 @@ async def analyze_image(
             "is_tampered": False,
             "tamper_probability": 0.0,
             "confidence": 0.0,
-            "analysis": {"mean_brightness": 0.0, "std_brightness": 0.0,
-                         "channel_means": [0.0, 0.0, 0.0], "forensic_report": "Error processing image."},
-            "method": "error",
+            "analysis": {
+                "mean_brightness": 0.0, 
+                "std_brightness": 0.0,
+                "channel_means": [0.0, 0.0, 0.0], 
+                "forensic_report": f"Error: {str(e)}"
+            },
+            "method": f"Error: {str(e)}",
             "latency_ms": round((time.time() - t0) * 1000, 2),
             "error": str(e),
         }
