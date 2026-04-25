@@ -116,9 +116,10 @@ import os
 import json
 import google.generativeai as genai
 
-# Hardcode API key for hackathon presentation stability
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyBfmQ11wdtKmz3Kh6Ddu9bmxPDP72akZaU")
-genai.configure(api_key=GEMINI_KEY)
+# Fetch API key from environment variables (Secrets in Hugging Face)
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
+if GEMINI_KEY:
+    genai.configure(api_key=GEMINI_KEY)
 
 @router.post("/analyze-image")
 async def analyze_image(
