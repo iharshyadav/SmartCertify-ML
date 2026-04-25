@@ -142,7 +142,7 @@ async def analyze_image(
         fake_ela_result = _ela_heuristic(img)
 
         # Call Gemini Vision to do the ACTUAL heavy lifting
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-2.5-flash")
         
         prompt = """
         You are an advanced digital forensics AI analyzing a certificate image.
