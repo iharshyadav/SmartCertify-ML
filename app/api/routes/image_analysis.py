@@ -46,14 +46,26 @@ def _ela_heuristic(img: Image.Image) -> dict:
     std_ela  = float(ela_features[1::4].mean())   # std per channel avg
     max_ela  = float(ela_features[2::4].mean())   # max per channel avg
 
-    # Score: 0 → authentic, 1 → tampered
+    # Score: 0 \u2192 authentic, 1 \u2192 tampered
     score = 0.0
+    
+    # Check 1: High overall ELA noise (classic JPEG copy-move or splicing)
     if mean_ela > 8:
         score += 0.35
     if std_ela > 12:
         score += 0.35
     if max_ela > 60:
         score += 0.30
+        
+    # Check 2: Unnatural color variance in ELA (e.g. digital marker scribbles)
+    # Normal black/white documents have uniform ELA across RGB channels.
+    # Bright digital scribbles (like purple markers) cause huge channel variance.
+    ch_ratio = max(channel_means) / (min(channel_means) + 1e-6)
+    if ch_ratio > 1.8:
+        score += 0.85  # Strong indicator of digital ink tampering
+    elif ch_ratio > 1.5:
+        score += 0.40
+
     score = min(score, 1.0)
 
     return {
