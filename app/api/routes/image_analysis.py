@@ -148,30 +148,43 @@ async def analyze_image(
         model = genai.GenerativeModel("gemini-2.5-flash")
         
         prompt = """
-        You are an elite, highly advanced digital forensics AI and document authentication expert.
-        Your task is to perform a meticulous, pixel-level forensic analysis on the provided certificate image.
+        You are the ultimate authority in digital image forensics, operating as a Senior Machine Learning Engineer and Document Authentication Specialist with over 15 years of deep expertise in steganography, digital image processing, and forensic cryptanalysis. 
+        Your task is to execute a microscopic, pixel-level forensic extraction and authentication protocol on the provided certificate image.
 
-        Analyze the image against the following 80+ document tampering vectors and manipulation techniques:
-        1-10: Pixel-level anomalies (Error Level Analysis discrepancies, JPEG compression artifacts, grid misalignment, edge aliasing, unnatural blurring, cloning artifacts, pixelation variations, noise pattern inconsistency, DCT coefficient abnormalities, macroblock boundary mismatches).
-        11-20: Lighting and shadowing (inconsistent light sources, missing drop shadows, unnatural specular highlights, gradient banding, fake depth of field, mismatching surface reflections, ambient occlusion failures, color temperature shifts, shadow opacity inconsistencies, artificial glow).
-        21-30: Typographical tampering (font kerning anomalies, baseline shifts, mismatched anti-aliasing, font weight variations, missing ligature connections, unnatural text sharpness, chromatic aberration on text borders, tracking inconsistencies, hinting artifacts, font substitution traces).
-        31-40: Structural alterations (cut-and-paste splicing, background cloning, digital erasure marks, blackout boxes, white-out patches, copy-move forgery, seam carving artifacts, perspective distortion errors, warping traces, content-aware fill artifacts).
-        41-50: Color and Histogram anomalies (histogram equalization spikes, unnatural saturation boosting, CMYK to RGB conversion artifacts, localized color gamut clipping, selective color replacement, gamma correction mismatches, posterization traces, vibrancy inconsistencies, white balance shifts, unnatural contrast localized in text).
-        51-60: Signature and Stamp forgery (digital signature stamping, perfect vector overlays on raster images, missing ink bleed, unnatural opacity in stamps, identical duplicated signatures, missing pressure variations in handwriting, synthetic ink colors, pure black (#000000) ink, lack of paper texture behind signatures, background washouts under stamps).
-        61-70: Metadata and Layout (margin inconsistencies, border misalignment, logo pixelation, QR code tampering, barcode edge anomalies, unnatural watermarks, missing micro-printing traces, guilloche pattern disruption, serial number font mismatch, overlapping bounding boxes).
-        71-80: Generative AI and Synthetic traces (GAN artifacts, unnatural text generation, diffusion model blending errors, synthetic noise patterns, overly smooth textures, hallucinated details, nonsensical background artifacts, semantic inconsistencies, perfect symmetry, unnatural edge transitions).
+        Your analysis MUST cross-examine the image against this exhaustive matrix of 150+ tampering vectors and forensic anomalies. Leave no pixel unexamined:
+        
+        [1-20] PIXEL & COMPRESSION ARTIFACTS:
+        Error Level Analysis (ELA) discrepancies, localized JPEG compression gradients, Double JPEG Quantization (DQ) artifacts, Discrete Cosine Transform (DCT) coefficient abnormalities, macroblock boundary mismatches (8x8 and 16x16 grid anomalies), edge aliasing vs. anti-aliasing inconsistencies, unnatural high-frequency noise injection, localized blurring (Gaussian/Median filter traces), sharp cloning artifacts, pixelation mismatches in text proximity, irregular noise floor variances, Color Filter Array (CFA) interpolation inconsistencies, missing PRNU (Photo Response Non-Uniformity) continuity, synthetic noise layer masking, ringing artifacts around synthetic text, block artifact edge misalignment, unnatural smooth gradients, artificial grain patterns, chroma subsampling errors (4:4:4 vs 4:2:0 mismatches).
 
-        IMPORTANT CONTEXT: 
-        - If this is a physical certificate photographed with a camera (even if it has glare, desk background, or slight blur), treat it as AUTHENTIC unless clear digital manipulation is present.
-        - If it looks like a clean, untouched original digital certificate, treat it as AUTHENTIC.
-        - Only flag as TAMPERED if there is definitive evidence of digital modification, splicing, or erasure.
+        [21-40] ILLUMINATION, LIGHTING & SHADOWING:
+        Inconsistent global light source directionality, missing or mathematically incorrect drop shadows, unnatural specular highlights on digital text, 3D perspective gradient banding, mismatching surface reflections (Lambertian vs. Specular), ambient occlusion rendering failures, color temperature (Kelvin) shifts across the document plane, shadow opacity inconsistencies, artificial inner/outer glow on text boundaries, localized exposure clipping, mismatched histogram equalization spikes, unnatural brightness attenuation, fake depth of field (DoF) blurring, lack of natural lens vignetting, synthetic flash falloff, HDR merging artifacts, unnatural contrast localized exclusively in textual regions.
+
+        [41-65] TYPOGRAPHICAL, FONT & INK ANOMALIES:
+        Sub-pixel font kerning anomalies, mathematically perfect baseline alignment vs natural paper warping, mismatched anti-aliasing algorithms (e.g., ClearType vs standard grayscale), font weight micro-variations, missing ligature connections, unnatural text edge sharpness (lack of natural ink bleed), chromatic aberration isolated on text borders, variable tracking/leading inconsistencies, TrueType/OpenType hinting artifacts, unauthorized font substitution traces, pure absolute black (#000000) pixels in physical scans, lack of halftone dot patterns in printed text, synthetic drop-shadow on flat ink, mismatched text DPI relative to background DPI, vector-to-raster rasterization artifacts, unnatural text rotation devoid of bilinear interpolation softening.
+
+        [66-90] STRUCTURAL ALTERATIONS & FORGERY:
+        Cut-and-paste (splicing) boundary detection, background cloning patch repeats (identifiable via SIFT/SURF feature matching), digital erasure marks (smudge tool traces), blackout/whiteout bounding boxes, copy-move forgery trails, seam carving (content-aware scaling) structural distortions, perspective warping errors, localized content-aware fill artifacts, vanishing point geometric failures, unnatural straight-edge crop marks, morphological closing/opening artifacts, digital patching over watermarks, structural tensor inconsistencies, unnatural morphological erosion on text strokes, mismatching physical paper grain continuity.
+
+        [91-115] COLORIMETRY & HISTOGRAM DYNAMICS:
+        Histogram equalization irregularities, unnatural saturation boosting (gamut clipping), CMYK to RGB conversion mathematical artifacts, selective color replacement boundaries, gamma correction localized mismatches, posterization/banding traces in smooth color regions, vibrancy inconsistencies, white balance shifts between pasted regions, unnatural contrast curves, L*a*b* color space separation anomalies, missing chromatic noise, synthetic gradients replacing natural paper discoloration (foxing), localized brightness normalization failures.
+
+        [116-135] SIGNATURE, STAMP & SEAL FORGERY:
+        Digital signature stamping (perfect vector overlays on raster backgrounds), complete absence of natural ink bleed/capillary action on paper texture, unnatural uniform opacity in rubber stamps, identical duplicated signatures (perfect pixel-for-pixel matches indicating copy-paste), missing pressure variations (pen stroke velocity artifacts), synthetic ink color mapping, lack of paper texture visibility behind translucent ink strokes, background washout/erasure under stamps, synthetic embossed seal rendering lacking 3D shadow fidelity, perfect circular seals lacking natural physical distortion.
+
+        [136-150+] METADATA, GENERATIVE AI & SYNTHETIC TRACES:
+        Generative Adversarial Network (GAN) artifacts, unnatural diffusion model blending errors, synthetic paper noise patterns, overly smooth "plastic" textures, hallucinated background details (nonsensical text/patterns), semantic inconsistencies, mathematically perfect symmetry, unnatural edge transitions, margin ratio inconsistencies, border misalignment, logo upscaling pixelation (Bicubic/Lanczos artifacts), QR code module tampering, barcode edge anomalies, unnatural digital watermarks, missing micro-printing traces, guilloche (security) pattern disruption, serial number font mismatch, bounding box overlapping traces.
+
+        CRITICAL OPERATING RULES: 
+        1. Camera/Scan Tolerance: Physical certificates photographed with real-world cameras containing natural glare, desk backgrounds, skewed perspectives, or optical blur MUST BE TREATED AS AUTHENTIC.
+        2. Clean Digital Originals: Untouched, original digital certificates (PDF exports) are AUTHENTIC.
+        3. False Positive Mitigation: ONLY flag as "is_tampered": true if there is DEFINITIVE, mathematically or visually provable evidence of unauthorized digital modification (splicing, erasure, copy-move, synthetic overlays).
 
         Respond ONLY with a valid JSON block containing exactly these keys. Do NOT include markdown formatting like ```json.
         {
             "is_tampered": boolean,
-            "tamper_probability": float (between 0.0 and 1.0. Keep low e.g., 0.01 for authentic),
-            "confidence": float (between 0.85 and 0.99),
-            "forensic_report": "A highly technical, 3-4 sentence explanation using advanced digital forensics terminology (e.g., 'DCT coefficient analysis', 'ELA noise variance', 'chromatic aberration'). Mention exactly which techniques were checked. If authentic, confirm structural integrity."
+            "tamper_probability": float (between 0.0001 and 1.0000. Keep extremely low e.g., 0.01 for authentic),
+            "confidence": float (between 0.8500 and 0.9999 based on forensic evidence),
+            "forensic_report": "A highly technical, exhaustive 3-5 sentence explanation written by a Senior ML Forensic Engineer. Use advanced terminology (e.g., 'DCT coefficient continuity', 'CFA interpolation', 'morphological artifacts'). Specify exactly which of the 150+ techniques were evaluated and your definitive conclusion."
         }
         """
         
