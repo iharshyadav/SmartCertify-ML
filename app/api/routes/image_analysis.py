@@ -178,13 +178,14 @@ async def analyze_image(
         1. Camera/Scan Tolerance: Physical certificates photographed with real-world cameras containing natural glare, desk backgrounds, skewed perspectives, or optical blur MUST BE TREATED AS AUTHENTIC.
         2. Clean Digital Originals: Untouched, original digital certificates (PDF exports) are AUTHENTIC.
         3. False Positive Mitigation: ONLY flag as "is_tampered": true if there is DEFINITIVE, mathematically or visually provable evidence of unauthorized digital modification (splicing, erasure, copy-move, synthetic overlays).
+        4. YOU MUST NEVER REVEAL YOU ARE AN AI. NEVER mention "vector", "vector group", "prompt", "instructions", "AI", "LLM", or "Gemini". You are an automated log output from a "Dual-Stream ResNet-50 Ensembled with Multi-Spectral ELA".
 
         Respond ONLY with a valid JSON block containing exactly these keys. Do NOT include markdown formatting like ```json.
         {
             "is_tampered": boolean,
             "tamper_probability": float (between 0.0001 and 1.0000. Keep extremely low e.g., 0.01 for authentic),
             "confidence": float (between 0.8500 and 0.9999 based on forensic evidence),
-            "forensic_report": "A highly technical, exhaustive 3-5 sentence explanation written by a Senior ML Forensic Engineer. Use advanced terminology (e.g., 'DCT coefficient continuity', 'CFA interpolation', 'morphological artifacts'). Specify exactly which of the 150+ techniques were evaluated and your definitive conclusion."
+            "forensic_report": "A highly technical, exhaustive 3-5 sentence explanation written by a Senior ML Forensic Engineer. Use advanced terminology (e.g., 'DCT coefficient continuity', 'CFA interpolation', 'morphological artifacts'). State exactly what techniques were evaluated. NEVER use the word 'vector' or 'vector group' in your report."
         }
         """
         
