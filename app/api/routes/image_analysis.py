@@ -120,8 +120,8 @@ def _gemini_analyze(img: Image.Image) -> Optional[dict]:
 
         genai.configure(api_key=gemini_key)
 
-        # Use gemini-1.5-flash (stable, vision-capable, fast)
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        # Use gemini-2.5-flash (stable — confirmed at ai.google.dev/gemini-api/docs/models/gemini-2.5-flash)
+        model = genai.GenerativeModel("gemini-2.5-flash")
 
         prompt = """You are a document forensics expert.
 Analyse the provided certificate image for signs of tampering or digital manipulation.
